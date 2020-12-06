@@ -122,6 +122,7 @@ bool is_threshold( const TT& tt, std::vector<int64_t>* plf = nullptr )
     std::cerr << "Unable to allocate ILP constraints" << std::endl;
     return false;
   }
+
   set_verbose( lp, IMPORTANT );
   set_add_rowmode( lp, true );
 
