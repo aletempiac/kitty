@@ -33,11 +33,22 @@
 #pragma once
 
 #include <vector>
-// #include <lpsolve/lp_lib.h> /* uncomment this line to include lp_solve */
+#include <lpsolve/lp_lib.h>
+#include "operators.hpp"
+#include "operations.hpp"
+#include "isop.hpp"
 #include "traits.hpp"
 
 namespace kitty
 {
+  //struct Constraint
+  //{
+    /* ILP defined as:
+     * v[0] + v[1] + ... + const [>= | <=] v[N] */
+    //std::vector<int64_t> variables;
+    //uint64_t constant;
+    //Constraint_Type type;
+  //};
 
 /*! \brief Threshold logic function identification
 
@@ -59,17 +70,148 @@ template<typename TT, typename = std::enable_if_t<is_complete_truth_table<TT>::v
 bool is_threshold( const TT& tt, std::vector<int64_t>* plf = nullptr )
 {
   std::vector<int64_t> linear_form;
+  std::vector<uint64_t> neg_unate;
 
-  /* TODO */
+  auto numvars = tt.num_vars();
+  auto ttf = tt;
+
+  /* check for unateness, and create positive unate function */
+  for ( auto i = 0u; i < numvars; i++ )
+  {
+    auto const tt1 = cofactor0( ttf, i );
+    auto const tt2 = cofactor1( ttf, i );
+    auto const smoothing = tt1 | tt2;
+
+    if ( tt1 == tt2 )
+    {
+      /* don't care */
+      continue;
+    }
+    else if ( tt1 == smoothing )
+    {
+      /* negative unate, convert to positive unate */
+      flip_inplace( ttf, i );
+      neg_unate.push_back( i );
+    }
+    else if ( tt2 != smoothing )
+    {
+      /* binate, tt is non-TF */
+      return false;
+    }
+  }
+
+  /* ttf is positive unate, build ILP problem */
+
+  auto nttf = ~ttf;
+  /* compute ISOPs */
+  const auto fcubes = isop( ttf );
+  const auto nfcubes = isop( nttf );
+  unsigned ncol = numvars + 1;
+
+  /* Create a new LP model */
+  lprec *lp;
+  int *colno = (int *) malloc( ncol * sizeof( int ) );
+  REAL *row = (REAL *) malloc( ncol * sizeof( REAL ) );
+
+  lp = make_lp( 0, ncol );
+  if( lp == nullptr || colno == nullptr || row == nullptr ) {
+    std::cerr << "Unable to create new LP model" << std::endl;
+    return false;
+  }
+  if( colno == nullptr || row == nullptr ) {
+    std::cerr << "Unable to allocate ILP constraints" << std::endl;
+    return false;
+  }
+  set_verbose( lp, IMPORTANT );
+  set_add_rowmode( lp, true );
+
+  for ( auto cube : fcubes )
+  {
+    auto cnt = 0u;
+    for ( auto i = 0u; i < numvars; i++ )
+    {
+      if ( cube.get_mask( i ) && cube.get_bit( i ) )
+      {
+        colno[cnt] = i + 1;
+        row[cnt++] = 1;
+      }
+    }
+    colno[cnt] = ncol;
+    row[cnt++] = -1;
+
+    if( !add_constraintex( lp, cnt, row, colno, GE, 0 ) ) {
+      std::cerr << "Unable to add constraint" << std::endl;
+      return false;
+    }
+  }
+
+  for ( auto cube : nfcubes )
+  {
+    auto cnt = 0u;
+    for ( auto i = 0u; i < numvars; i++ )
+    {
+      if ( !cube.get_mask( i ) || ( cube.get_mask( i ) && cube.get_bit( i ) ) )
+      {
+        colno[cnt] = i + 1;
+        row[cnt++] = 1;
+      }
+    }
+    colno[cnt] = ncol;
+    row[cnt++] = -1;
+
+    if( !add_constraintex( lp, cnt, row, colno, LE, -1 ) ) {
+      std::cerr << "Unable to add constraint" << std::endl;
+      return false;
+    }
+  }
+
+  set_add_rowmode( lp, false );
+
+  /* set the objective function */
+  for ( auto i = 0u; i < ncol; i++ )
+  {
+    colno[i] = i + 1;
+    row[i] = 1;
+  }
+  if( !set_obj_fnex( lp, ncol, row, colno ) ) {
+    std::cerr << "Unable to add obj function" << std::endl;
+    return false;
+  }
+  set_minim( lp );
+
+  /* solve */
+  auto result = solve(lp);
+
   /* if tt is non-TF: */
-  return false;
+  if ( result != OPTIMAL && result != SUBOPTIMAL )
+  {
+    free( row );
+    free( colno );
+    delete_lp(lp);
+    return false;
+  }
 
   /* if tt is TF: */
   /* push the weight and threshold values into `linear_form` */
-  if ( plf )
+  get_variables(lp, row);
+
+  for ( auto i = 0u; i < ncol; i++ )
   {
-    *plf = linear_form;
+    linear_form.push_back( static_cast<int64_t>( row[i] ) );
   }
+
+  /* adjust for negative unate variables */
+  for ( const auto var : neg_unate )
+  {
+    linear_form[var] = -linear_form[var];
+    linear_form[ncol - 1] += linear_form[var];
+  }
+
+  *plf = linear_form;
+
+  free( row );
+  free( colno );
+  delete_lp(lp);
   return true;
 }
 
