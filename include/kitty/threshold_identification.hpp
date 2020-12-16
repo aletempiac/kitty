@@ -112,83 +112,97 @@ bool is_threshold( const TT& tt, std::vector<int64_t>* plf = nullptr )
   lprec *lp;
   int *colno = (int *) malloc( ncol * sizeof( int ) );
   REAL *row = (REAL *) malloc( ncol * sizeof( REAL ) );
+  int ret = 0;
 
   lp = make_lp( 0, ncol );
   if( lp == nullptr || colno == nullptr || row == nullptr ) {
     std::cerr << "Unable to create new LP model" << std::endl;
-    return false;
+    ret = 1;
   }
   if( colno == nullptr || row == nullptr ) {
     std::cerr << "Unable to allocate ILP constraints" << std::endl;
-    return false;
+    ret = 2;
   }
 
-  set_verbose( lp, IMPORTANT );
-  set_add_rowmode( lp, true );
-
-  for ( auto cube : fcubes )
+  if ( ret == 0 )
   {
-    auto cnt = 0u;
-    for ( auto i = 0u; i < numvars; i++ )
+    set_verbose( lp, IMPORTANT );
+    set_add_rowmode( lp, true );
+
+    for ( auto cube : fcubes )
     {
-      if ( cube.get_mask( i ) && cube.get_bit( i ) )
+      auto cnt = 0u;
+      for ( auto i = 0u; i < numvars; i++ )
       {
-        colno[cnt] = i + 1;
-        row[cnt++] = 1;
+        if ( cube.get_mask( i ) && cube.get_bit( i ) )
+        {
+          colno[cnt] = i + 1;
+          row[cnt++] = 1;
+        }
+      }
+      colno[cnt] = ncol;
+      row[cnt++] = -1;
+
+      if( !add_constraintex( lp, cnt, row, colno, GE, 0 ) ) {
+        std::cerr << "Unable to add constraint" << std::endl;
+        ret = 3;
       }
     }
-    colno[cnt] = ncol;
-    row[cnt++] = -1;
 
-    if( !add_constraintex( lp, cnt, row, colno, GE, 0 ) ) {
-      std::cerr << "Unable to add constraint" << std::endl;
-      return false;
-    }
-  }
-
-  for ( auto cube : nfcubes )
-  {
-    auto cnt = 0u;
-    for ( auto i = 0u; i < numvars; i++ )
+    for ( auto cube : nfcubes )
     {
-      if ( !cube.get_mask( i ) || ( cube.get_mask( i ) && cube.get_bit( i ) ) )
+      auto cnt = 0u;
+      for ( auto i = 0u; i < numvars; i++ )
       {
-        colno[cnt] = i + 1;
-        row[cnt++] = 1;
+        if ( !cube.get_mask( i ) || cube.get_bit( i ) )
+        {
+          colno[cnt] = i + 1;
+          row[cnt++] = 1;
+        }
+      }
+      colno[cnt] = ncol;
+      row[cnt++] = -1;
+
+      if( !add_constraintex( lp, cnt, row, colno, LE, -1 ) ) {
+        std::cerr << "Unable to add constraint" << std::endl;
+        ret = 3;
       }
     }
-    colno[cnt] = ncol;
-    row[cnt++] = -1;
-
-    if( !add_constraintex( lp, cnt, row, colno, LE, -1 ) ) {
-      std::cerr << "Unable to add constraint" << std::endl;
-      return false;
-    }
   }
 
-  set_add_rowmode( lp, false );
-
-  /* set the objective function */
-  for ( auto i = 0u; i < ncol; i++ )
+  if ( ret == 0 )
   {
-    colno[i] = i + 1;
-    row[i] = 1;
+    set_add_rowmode( lp, false );
+
+    /* set the objective function */
+    for ( auto i = 0u; i < ncol; i++ )
+    {
+      colno[i] = i + 1;
+      row[i] = 1;
+    }
+    if( !set_obj_fnex( lp, ncol, row, colno ) ) {
+      std::cerr << "Unable to add obj function" << std::endl;
+      ret = 4;
+    }
+    set_minim( lp );
   }
-  if( !set_obj_fnex( lp, ncol, row, colno ) ) {
-    std::cerr << "Unable to add obj function" << std::endl;
-    return false;
-  }
-  set_minim( lp );
 
   /* solve */
-  auto result = solve(lp);
-
-  /* if tt is non-TF: */
-  if ( result != OPTIMAL && result != SUBOPTIMAL )
+  int result = 0;
+  if ( ret == 0 )
   {
-    free( row );
-    free( colno );
-    delete_lp(lp);
+    result = solve(lp);
+  }
+  
+  /* if tt is non-TF: */
+  if ( ret != 0 || ( result != OPTIMAL && result != SUBOPTIMAL ) )
+  {
+    if ( row != NULL )
+      free( row );
+    if ( colno != NULL )
+      free( colno );
+    if ( lp != NULL )
+      delete_lp(lp);
     return false;
   }
 
