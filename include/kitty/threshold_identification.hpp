@@ -41,14 +41,6 @@
 
 namespace kitty
 {
-  //struct Constraint
-  //{
-    /* ILP defined as:
-     * v[0] + v[1] + ... + const [>= | <=] v[N] */
-    //std::vector<int64_t> variables;
-    //uint64_t constant;
-    //Constraint_Type type;
-  //};
 
 /*! \brief Threshold logic function identification
 
